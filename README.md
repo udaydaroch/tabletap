@@ -2,6 +2,10 @@
 
 Spring Boot 3 (Java 21, layered) + React (Vite) + PostgreSQL. One Docker image serves both the API and the UI.
 
+![TableTap architecture](docs/architecture.svg)
+
+*Full-size: [docs/architecture.svg](docs/architecture.svg)*
+
 ## Run locally
 
 ```bash
