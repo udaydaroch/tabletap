@@ -1,0 +1,8 @@
+node_modules/
+dist/
+target/
+.env
+.idea/
+*.iml
+backups/
+infra/azure/.deploy.parameters.json

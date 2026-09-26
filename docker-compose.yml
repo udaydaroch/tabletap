@@ -1,0 +1,63 @@
+# Runs TableTap on a computer inside the restaurant. Works with no internet:
+# phones/tablets connect over the restaurant Wi-Fi to http://<this-computer's-IP>:8080
+# First time: ./scripts/setup-local.sh   (creates .env with strong secrets)
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tabletap
+      POSTGRES_USER: ${DB_USER:-tabletap}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-tabletap}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tabletap} -d tabletap"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/tabletap
+      DB_USER: ${DB_USER:-tabletap}
+      DB_PASSWORD: ${DB_PASSWORD:-tabletap}
+      JWT_SECRET: ${JWT_SECRET:-local-dev-secret-local-dev-secret-0123456789}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@tabletap.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe123!}
+      DEMO_DATA: ${DEMO_DATA:-true}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Password123!}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Local backups every 6 hours into ./backups (kept 14 days) — no internet needed.
+  # Restore: docker compose exec -T db pg_restore -U tabletap -d tabletap --clean < backups/<file>.dump
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:-tabletap}
+      PGUSER: ${DB_USER:-tabletap}
+    volumes:
+      - ./backups:/backups
+    entrypoint:
+      - sh
+      - -c
+      - |
+        while true; do
+          f=/backups/tabletap-$$(date +%Y%m%d-%H%M).dump
+          pg_dump -h db -d tabletap -Fc -f "$$f" && echo "backup written: $$f"
+          find /backups -name 'tabletap-*.dump' -mtime +14 -delete
+          sleep 21600
+        done
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
