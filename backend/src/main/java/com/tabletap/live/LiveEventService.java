@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Server-Sent Events hub. Events are broadcast only after the DB transaction commits,
  * and only to subscribers allowed to see that restaurant/owner.
- * Note: in-memory — with more than one replica, back this with Redis/Azure Web PubSub.
+ * Note: in-memory — with more than one replica, back this with Redis.
  */
 @Slf4j
 @Service
