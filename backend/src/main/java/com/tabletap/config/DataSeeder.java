@@ -22,6 +22,7 @@ public class DataSeeder implements CommandLineRunner {
     private final RestaurantRepository restaurants;
     private final MenuCategoryRepository categories;
     private final FloorService floors;
+    private final IngredientRepository ingredients;
     private final PasswordEncoder encoder;
 
     @Override
@@ -61,13 +62,30 @@ public class DataSeeder implements CommandLineRunner {
         category(bistro, "Starters", 1,
             item("Garlic Bread", "9.50", List.of("Add cheese", "Gluten free")),
             item("Soup of the Day", "12.00", List.of()));
+        MenuItem ribeye;
         category(bistro, "Mains", 2,
-            item("Ribeye Steak", "38.00", List.of("Rare", "Medium rare", "Medium", "Well done", "Pepper sauce", "Mushroom sauce")),
+            ribeye = item("Ribeye Steak", "38.00", List.of("Rare", "Medium rare", "Medium", "Well done", "Pepper sauce", "Mushroom sauce")),
             item("Fish & Chips", "27.00", List.of("Extra lemon", "No tartare")),
             item("Mushroom Risotto", "26.00", List.of("Vegan", "Add chicken")));
-        category(bistro, "Drinks", 3,
+        MenuCategory drinks = category(bistro, "Drinks", 3,
             item("Flat White", "5.00", List.of("Oat milk", "Extra shot", "Decaf")),
             item("House Red (glass)", "13.00", List.of()));
+        drinks.setStation("BAR");                       // drinks go to the bar, not the kitchen
+        ribeye.setStation("GRILL");                     // steaks go to the grill
+        ribeye.setKitchenName("रिबआई स्टेक");            // shown on dockets for Hindi-reading chefs
+        Ingredient steak = new Ingredient();            // stock tracking demo: 12 steaks, alert at 4
+        steak.setRestaurant(bistro);
+        steak.setName("Ribeye");
+        steak.setUnit("portions");
+        steak.setStock(new BigDecimal("12"));
+        steak.setLowThreshold(new BigDecimal("4"));
+        ingredients.save(steak);
+        RecipeLine rl = new RecipeLine();
+        rl.setMenuItem(ribeye);
+        rl.setIngredient(steak);
+        rl.setQuantity(BigDecimal.ONE);
+        ribeye.getRecipe().add(rl);
+        bistro.setTimeZone("Pacific/Auckland");
         category(noodle, "Noodles", 1,
             item("Pad Thai", "22.00", List.of("Mild", "Hot", "Extra hot", "No peanuts")),
             item("Ramen", "24.00", List.of("Extra egg", "Spicy")));
@@ -97,7 +115,7 @@ public class DataSeeder implements CommandLineRunner {
         return i;
     }
 
-    private void category(Restaurant r, String name, int order, MenuItem... items) {
+    private MenuCategory category(Restaurant r, String name, int order, MenuItem... items) {
         MenuCategory c = new MenuCategory();
         c.setRestaurant(r);
         c.setName(name);
@@ -106,6 +124,6 @@ public class DataSeeder implements CommandLineRunner {
             i.setCategory(c);
             c.getItems().add(i);
         }
-        categories.save(c);
+        return categories.save(c);
     }
 }

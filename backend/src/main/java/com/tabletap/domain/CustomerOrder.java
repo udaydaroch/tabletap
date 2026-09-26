@@ -45,6 +45,12 @@ public class CustomerOrder {
 
     private Instant createdAt = Instant.now();
 
+    /** Set when the table's bill is paid. Unpaid orders keep the table "occupied". */
+    @ManyToOne(fetch = FetchType.LAZY)
+    private Bill bill;
+
+    private Instant paidAt;
+
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("id")
     private List<OrderLine> lines = new ArrayList<>();

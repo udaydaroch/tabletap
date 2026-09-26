@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
@@ -21,7 +22,7 @@ import java.util.Map;
 
 /**
  * Usage-based pricing: monthly fee per restaurant (prorated by days active this month)
- * + fee per order. Hook a payment provider (e.g. Stripe metered billing) in here later.
+ * + fee per order. Charging goes through a BillingProvider (see com.tabletap.billing).
  */
 @Service
 @RequiredArgsConstructor
@@ -30,6 +31,7 @@ public class BillingService {
     private final RestaurantRepository restaurants;
     private final OrderRepository orders;
     private final AppProperties props;
+    private final com.tabletap.billing.BillingProvider provider;
 
     public BillingUsage usage(AppUser u) {
         if (u.getRole() != Role.OWNER) throw ApiException.badRequest("Billing applies to owner accounts");
@@ -37,17 +39,24 @@ public class BillingService {
     }
 
     public BillingUsage usageFor(AppUser owner) {
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        LocalDate start = today.withDayOfMonth(1);
-        LocalDate end = today.withDayOfMonth(today.lengthOfMonth());
-        int days = today.lengthOfMonth();
+        return usageFor(owner, YearMonth.now(ZoneOffset.UTC));
+    }
+
+    /** Usage for any calendar month (the monthly billing job charges last month's). */
+    public BillingUsage usageFor(AppUser owner, YearMonth month) {
+        LocalDate start = month.atDay(1);
+        LocalDate end = month.atEndOfMonth();
+        int days = month.lengthOfMonth();
         var fees = props.billing();
+        java.time.Instant from = start.atStartOfDay().toInstant(ZoneOffset.UTC);
+        java.time.Instant to = end.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
 
         Map<Long, Long> orderCounts = new HashMap<>();
-        for (Object[] row : orders.countPerRestaurantForOwnerSince(owner.getId(), start.atStartOfDay().toInstant(ZoneOffset.UTC)))
+        for (Object[] row : orders.countPerRestaurantForOwnerBetween(owner.getId(), from, to))
             orderCounts.put((Long) row[0], (Long) row[1]);
 
         List<BillingUsage.Line> lines = restaurants.findByOwnerIdOrderByName(owner.getId()).stream()
+            .filter(r -> r.getCreatedAt().isBefore(to)) // not open yet that month
             .map(r -> line(r, start, days, orderCounts.getOrDefault(r.getId(), 0L), fees))
             .toList();
 
@@ -57,7 +66,7 @@ public class BillingService {
         long totalOrders = lines.stream().mapToLong(BillingUsage.Line::orders).sum();
         return new BillingUsage(owner.getId(), start, end, days, fees.monthlyFeePerRestaurant(), fees.feePerOrder(),
             fees.floorPlanFee(), lines, totalOrders, restaurantFees, orderFees, floorFees,
-            restaurantFees.add(orderFees).add(floorFees));
+            restaurantFees.add(orderFees).add(floorFees), provider.enabled() ? provider.name() : null);
     }
 
     private BillingUsage.Line line(Restaurant r, LocalDate periodStart, int days, long orderCount, AppProperties.Billing fees) {

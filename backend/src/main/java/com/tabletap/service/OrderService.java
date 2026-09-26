@@ -2,6 +2,7 @@ package com.tabletap.service;
 
 import com.tabletap.domain.*;
 import com.tabletap.dto.OrderDtos.*;
+import com.tabletap.kitchen.StationRouter;
 import com.tabletap.live.LiveEvent;
 import com.tabletap.repository.FloorElementRepository;
 import com.tabletap.repository.MenuItemRepository;
@@ -26,6 +27,7 @@ public class OrderService {
     private final RestaurantService restaurants;
     private final AccessService access;
     private final ApplicationEventPublisher events;
+    private final StationRouter stations;
 
     public OrderView create(AppUser u, Long restaurantId, CreateOrderRequest req) {
         Restaurant r = restaurants.load(restaurantId);
@@ -76,10 +78,13 @@ public class OrderService {
             line.setQuantity(lr.quantity());
             line.getOptions().addAll(opts);
             line.setNote(lr.note());
+            line.setStation(stations.route(item));
+            line.setKitchenName(item.getKitchenName());
             o.getLines().add(line);
         }
         orders.save(o);
-        // Kitchen screens (and later a docket-printer service) react to this event.
+        // Observers react: stock is deducted in this transaction; printers, screens and cloud sync after commit.
+        events.publishEvent(new OrderPlaced(o.getId(), r.getId()));
         events.publishEvent(LiveEvent.of(LiveEvent.ORDER_CREATED, r, u.getId()));
         return OrderView.of(o);
     }
@@ -101,6 +106,7 @@ public class OrderService {
         if (!o.getStatus().canMoveTo(status))
             throw ApiException.badRequest("Can't move an order from " + o.getStatus() + " to " + status);
         o.setStatus(status);
+        events.publishEvent(new com.tabletap.domain.DomainEvents.OrderStatusChanged(o.getId()));
         events.publishEvent(LiveEvent.of(LiveEvent.ORDER_UPDATED, o.getRestaurant(), u.getId()));
         return OrderView.of(o);
     }

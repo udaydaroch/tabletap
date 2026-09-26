@@ -19,6 +19,13 @@ management:
   endpoint.health.probes.enabled: true
 
 app:
+  stripe:
+    secret-key: ${STRIPE_SECRET_KEY:}   # empty = billing provider off (usage is still calculated)
+    currency: ${STRIPE_CURRENCY:nzd}
+    api-base: ${STRIPE_API_BASE:https://api.stripe.com}
+  sync:
+    url: ${CLOUD_SYNC_URL:}          # cloud TableTap to send changes to (empty = off)
+    site-key: ${CLOUD_SYNC_KEY:}
   jwt:
     secret: ${JWT_SECRET:change-me-change-me-change-me-change-me-please}
     ttl-hours: ${JWT_TTL_HOURS:12}

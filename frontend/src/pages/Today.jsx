@@ -104,7 +104,10 @@ export default function Today() {
             <div className={`order-row ${o.status === 'CANCELLED' ? 'faded' : ''}`} key={o.id}>
               <div className="order-row-head">
                 <b>{clock(o.createdAt)} · Table {o.tableLabel}</b>
-                <span className={`pill small status-pill-${o.status.toLowerCase()}`}>{o.status.replace('_', ' ')}</span>
+                <span>
+                  {o.paid && <span className="pill small green">Paid</span>}
+                  <span className={`pill small status-pill-${o.status.toLowerCase()}`}>{o.status.replace('_', ' ')}</span>
+                </span>
               </div>
               <div className="muted small">#{o.id} · {o.waiterName}</div>
               <ul>

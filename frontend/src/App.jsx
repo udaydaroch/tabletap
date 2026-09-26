@@ -8,6 +8,7 @@ import RestaurantPage from './pages/RestaurantPage.jsx';
 import TakeOrder from './pages/TakeOrder.jsx';
 import Kitchen from './pages/Kitchen.jsx';
 import Today from './pages/Today.jsx';
+import StockPage from './pages/StockPage.jsx';
 import OrgTree from './pages/OrgTree.jsx';
 import Admin from './pages/Admin.jsx';
 
@@ -39,6 +40,7 @@ export default function App() {
         {me.role !== 'CHEF' && <Route path="/restaurants/:id/order" element={<TakeOrder />} />}
         <Route path="/restaurants/:id/kitchen" element={<Kitchen />} />
         <Route path="/restaurants/:id/today" element={<Today />} />
+        {me.role !== 'WAITER' && <Route path="/restaurants/:id/stock" element={<StockPage />} />}
         {manager && <Route path="/tree" element={<OrgTree />} />}
         {me.role === 'ADMIN' && <Route path="/admin" element={<Admin />} />}
         <Route path="*" element={<Navigate to="/" />} />

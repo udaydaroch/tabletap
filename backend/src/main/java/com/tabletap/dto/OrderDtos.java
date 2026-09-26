@@ -28,14 +28,16 @@ public final class OrderDtos {
 
     public record StatusRequest(@NotNull OrderStatus status) {}
 
-    public record LineView(String itemName, BigDecimal unitPrice, int quantity, List<String> options, String note) {
+    public record LineView(String itemName, BigDecimal unitPrice, int quantity, List<String> options, String note,
+                           String station, String kitchenName) {
         static LineView of(OrderLine l) {
-            return new LineView(l.getItemName(), l.getUnitPrice(), l.getQuantity(), List.copyOf(l.getOptions()), l.getNote());
+            return new LineView(l.getItemName(), l.getUnitPrice(), l.getQuantity(), List.copyOf(l.getOptions()), l.getNote(),
+                l.getStation(), l.getKitchenName());
         }
     }
 
     public record OrderView(Long id, Long restaurantId, Long tableId, String tableLabel, OrderStatus status, String waiterName,
-                            String notes, Instant createdAt, BigDecimal total, List<LineView> lines) {
+                            String notes, Instant createdAt, BigDecimal total, List<LineView> lines, boolean paid) {
         public static OrderView of(CustomerOrder o) {
             BigDecimal total = o.getLines().stream()
                 .map(l -> l.getUnitPrice().multiply(BigDecimal.valueOf(l.getQuantity())))
@@ -43,7 +45,7 @@ public final class OrderDtos {
             return new OrderView(o.getId(), o.getRestaurant().getId(),
                 o.getDiningTable() == null ? null : o.getDiningTable().getId(), o.getTableLabel(), o.getStatus(),
                 o.getWaiter().getFullName(), o.getNotes(), o.getCreatedAt(), total,
-                o.getLines().stream().map(LineView::of).toList());
+                o.getLines().stream().map(LineView::of).toList(), o.getPaidAt() != null);
         }
     }
 }

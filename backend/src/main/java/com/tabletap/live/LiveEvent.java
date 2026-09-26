@@ -15,6 +15,9 @@ public record LiveEvent(String type, Long restaurantId, Long ownerId, Long userI
     public static final String MENU_CHANGED = "MENU_CHANGED";
     public static final String OWNER_CHANGED = "OWNER_CHANGED";
     public static final String FLOOR_CHANGED = "FLOOR_CHANGED";
+    public static final String PRINTER_CHANGED = "PRINTER_CHANGED";
+    public static final String STOCK_CHANGED = "STOCK_CHANGED";
+    public static final String BILL_PAID = "BILL_PAID";
 
     public static LiveEvent of(String type, Restaurant r, Long userId) {
         return new LiveEvent(type, r.getId(), r.getOwner().getId(), userId);

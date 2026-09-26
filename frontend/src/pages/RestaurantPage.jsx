@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, hm, money, time } from '../api.js';
 import useAsync from '../components/useAsync.js';
 import Modal from '../components/Modal.jsx';
 import { useLive } from '../live.jsx';
 import FloorEditor from '../components/FloorEditor.jsx';
+import StockPanel from '../components/StockPanel.jsx';
+import PrintersPanel from '../components/PrintersPanel.jsx';
 
-const TABS = ['Floor plan', 'Menu', 'Staff', 'Shifts', 'Details'];
+const TABS = ['Floor plan', 'Menu', 'Stock', 'Printers', 'Staff', 'Shifts', 'Details'];
+const STATIONS = ['KITCHEN', 'GRILL', 'BAR', 'DESSERT'];
 
 export default function RestaurantPage() {
   const { id } = useParams();
@@ -37,6 +40,8 @@ export default function RestaurantPage() {
       </div>
       {tab === 'Floor plan' && <FloorEditor rid={id} />}
       {tab === 'Menu' && <MenuEditor rid={id} />}
+      {tab === 'Stock' && <StockPanel rid={id} canManage />}
+      {tab === 'Printers' && <PrintersPanel rid={id} />}
       {tab === 'Staff' && <Staff rid={id} />}
       {tab === 'Shifts' && <Shifts rid={id} />}
       {tab === 'Details' && <Details r={r} onSaved={reload} />}
@@ -61,6 +66,12 @@ function MenuEditor({ rid }) {
           <div className="section-head">
             <h3>{c.name}</h3>
             <div className="actions">
+              <label className="inline-label small">Station
+                <select value={c.station || ''} onChange={(e) => run(() => api(`/menu/categories/${c.id}`, { method: 'PUT', body: { name: c.name, sortOrder: c.sortOrder, station: e.target.value || null } }))}>
+                  <option value="">KITCHEN (default)</option>
+                  {[...new Set([...STATIONS.slice(1), ...(c.station ? [c.station] : [])])].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </label>
               <button className="btn small" onClick={() => setEditing({ categoryId: c.id, name: '', price: '', options: [], available: true })}>+ Item</button>
               <button className="btn small ghost" onClick={() => confirm(`Delete "${c.name}" and all its items?`) && run(() => api(`/menu/categories/${c.id}`, { method: 'DELETE' }))}>Delete</button>
             </div>
@@ -70,6 +81,8 @@ function MenuEditor({ rid }) {
             <div className={`row menu-row ${i.available ? '' : 'faded'}`} key={i.id} onClick={() => setEditing(i)}>
               <div>
                 <b>{i.name}</b>{!i.available && <span className="pill small">86'd</span>}
+                {i.station && <span className="pill small">{i.station}</span>}
+                {i.kitchenName && <span className="muted small"> · {i.kitchenName}</span>}
                 {i.options.length > 0 && <div className="muted small">{i.options.join(' · ')}</div>}
               </div>
               <span>{money(i.price)}</span>
@@ -87,16 +100,27 @@ function MenuEditor({ rid }) {
 }
 
 function ItemModal({ item, categories, onClose, onSaved }) {
-  const [f, setF] = useState({ ...item, options: (item.options || []).join(', ') });
+  const [f, setF] = useState({ ...item, options: (item.options || []).join(', '), station: item.station || '', kitchenName: item.kitchenName || '' });
   const [err, setErr] = useState(null);
+  const rid = useParams().id;
+  const { data: ingredients } = useAsync(() => api(`/restaurants/${rid}/ingredients`), [rid]);
+  const [recipe, setRecipe] = useState(null);
+  useEffect(() => {
+    if (item.id) api(`/menu/items/${item.id}/recipe`).then(setRecipe).catch(() => setRecipe([]));
+    else setRecipe([]);
+  }, [item.id]);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
 
   const save = async (e) => {
     e.preventDefault();
     const body = { categoryId: Number(f.categoryId), name: f.name, description: f.description, price: Number(f.price), available: f.available,
-      options: f.options.split(',').map((s) => s.trim()).filter(Boolean) };
+      options: f.options.split(',').map((s) => s.trim()).filter(Boolean), station: f.station || null, kitchenName: f.kitchenName || null };
     try {
-      await api(item.id ? `/menu/items/${item.id}` : '/menu/items', { method: item.id ? 'PUT' : 'POST', body });
+      const saved = await api(item.id ? `/menu/items/${item.id}` : '/menu/items', { method: item.id ? 'PUT' : 'POST', body });
+      if (recipe) {
+        await api(`/menu/items/${saved.id}/recipe`, { method: 'PUT', body: {
+          lines: recipe.filter((l) => l.ingredientId && Number(l.quantity) > 0).map((l) => ({ ingredientId: Number(l.ingredientId), quantity: Number(l.quantity) })) } });
+      }
       onSaved();
     } catch (e2) { setErr(e2.message); }
   };
@@ -117,6 +141,33 @@ function ItemModal({ item, categories, onClose, onSaved }) {
         </label>
         <label>Description<textarea rows={2} value={f.description || ''} onChange={set('description')} /></label>
         <label>Options <span className="muted small">(comma separated)</span><input value={f.options} onChange={set('options')} placeholder="Rare, Medium, Well done" /></label>
+        <div className="grid-2 tight">
+          <label>Kitchen station
+            <input value={f.station} onChange={set('station')} list="item-stations" placeholder="Same as category" />
+          </label>
+          <label>Name for the kitchen <span className="muted small">(other language)</span>
+            <input value={f.kitchenName} onChange={set('kitchenName')} maxLength={100} placeholder="e.g. रिबआई स्टेक" />
+          </label>
+        </div>
+        <datalist id="item-stations">{STATIONS.map((s) => <option key={s}>{s}</option>)}</datalist>
+        <fieldset className="recipe">
+          <legend>Recipe <span className="muted small">(for stock tracking, optional)</span></legend>
+          {recipe === null && <p className="muted small">Loading…</p>}
+          {recipe?.map((l, idx) => (
+            <div className="recipe-row" key={idx}>
+              <select value={l.ingredientId || ''} onChange={(e) => setRecipe(recipe.map((x, j) => (j === idx ? { ...x, ingredientId: e.target.value } : x)))} aria-label="Ingredient">
+                <option value="">Choose ingredient…</option>
+                {ingredients?.map((g) => <option key={g.id} value={g.id}>{g.name} ({g.unit})</option>)}
+              </select>
+              <input type="number" step="any" min="0" value={l.quantity ?? ''} placeholder="Qty per portion" aria-label="Quantity per portion"
+                onChange={(e) => setRecipe(recipe.map((x, j) => (j === idx ? { ...x, quantity: e.target.value } : x)))} />
+              <button type="button" className="btn small ghost" onClick={() => setRecipe(recipe.filter((_, j) => j !== idx))} aria-label="Remove ingredient">✕</button>
+            </div>
+          ))}
+          {ingredients?.length === 0
+            ? <p className="muted small">Add ingredients in the Stock tab first.</p>
+            : <button type="button" className="btn small" onClick={() => setRecipe([...(recipe || []), { ingredientId: '', quantity: 1 }])}>+ Ingredient</button>}
+        </fieldset>
         <label className="check"><input type="checkbox" checked={f.available} onChange={set('available')} /> Available</label>
         {err && <div className="error">{err}</div>}
         <div className="actions">
@@ -198,7 +249,8 @@ function Shifts({ rid }) {
 }
 
 function Details({ r, onSaved }) {
-  const [f, setF] = useState({ name: r.name, address: r.address || '', cuisine: r.cuisine || '' });
+  const [f, setF] = useState({ name: r.name, address: r.address || '', cuisine: r.cuisine || '',
+    timeZone: r.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone });
   const [msg, setMsg] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const save = async (e) => {
@@ -210,6 +262,10 @@ function Details({ r, onSaved }) {
       <label>Name<input value={f.name} onChange={set('name')} required /></label>
       <label>Address<input value={f.address} onChange={set('address')} /></label>
       <label>Cuisine / type<input value={f.cuisine} onChange={set('cuisine')} /></label>
+      <label>Time zone <span className="muted small">(used for docket times)</span>
+        <input value={f.timeZone} onChange={set('timeZone')} list="tz-list" placeholder="Pacific/Auckland" />
+      </label>
+      <datalist id="tz-list">{['Pacific/Auckland', 'Australia/Sydney', 'Australia/Melbourne', 'Asia/Kolkata', 'Europe/London', 'America/New_York', 'UTC'].map((z) => <option key={z}>{z}</option>)}</datalist>
       {msg && <div className="muted">{msg}</div>}
       <button className="btn primary">Save</button>
     </form>

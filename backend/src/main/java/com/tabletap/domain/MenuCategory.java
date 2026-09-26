@@ -22,6 +22,9 @@ public class MenuCategory {
 
     private int sortOrder;
 
+    /** Kitchen station this category's dishes go to (e.g. KITCHEN, GRILL, BAR). Null = default kitchen. */
+    private String station;
+
     @OneToMany(mappedBy = "category", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("name")
     private List<MenuItem> items = new ArrayList<>();

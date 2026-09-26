@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, money, randomId } from '../api.js';
 import { outbox } from '../outbox.js';
+import BillModal from '../components/BillModal.jsx';
 import { useAuth } from '../auth.jsx';
 import useAsync from '../components/useAsync.js';
 import Modal from '../components/Modal.jsx';
@@ -19,7 +20,7 @@ export default function TakeOrder() {
   const { me } = useAuth();
   const { data: floor, reload: reloadFloor } = useAsync(() => api(`/restaurants/${id}/floor`), [id]);
   const { data: menu, error, reload: reloadMenu } = useAsync(() => api(`/restaurants/${id}/menu`), [id]);
-  useLive(['FLOOR_CHANGED', 'ORDER_CREATED', 'ORDER_UPDATED'], (ev) => { if (ev.restaurantId === Number(id)) reloadFloor(); });
+  useLive(['FLOOR_CHANGED', 'ORDER_CREATED', 'ORDER_UPDATED', 'BILL_PAID'], (ev) => { if (ev.restaurantId === Number(id)) reloadFloor(); });
   useLive(['MENU_CHANGED'], (ev) => { if (ev.restaurantId === Number(id)) reloadMenu(); });
 
   const [table, setTable] = useState(null);      // { key, id?, label, area? }
@@ -138,17 +139,12 @@ function FloorPicker({ floor, carts, toast, onPick, backTo, canEdit, rid }) {
 /** No floor plan: type (or tap) a table number. Shows tables that already have open orders. */
 function QuickTablePicker({ rid, carts, toast, onPick, backTo, canEdit }) {
   const [num, setNum] = useState('');
-  const { data: open, reload } = useAsync(() => api(`/restaurants/${rid}/orders?open=true`), [rid]);
-  useLive(['ORDER_CREATED', 'ORDER_UPDATED'], (ev) => { if (ev.restaurantId === Number(rid)) reload(); });
+  const { data: open, reload } = useAsync(() => api(`/restaurants/${rid}/bills`), [rid]);
+  useLive(['ORDER_CREATED', 'ORDER_UPDATED', 'BILL_PAID'], (ev) => { if (ev.restaurantId === Number(rid)) reload(); });
 
-  // group open orders by table label
+  // a table stays open until its bill is paid
   const busy = {};
-  (open || []).forEach((o) => {
-    const t = (busy[o.tableLabel] ||= { label: o.tableLabel, total: 0, ready: 0, since: o.createdAt });
-    t.total += Number(o.total);
-    if (o.status === 'READY') t.ready += 1;
-    if (o.createdAt < t.since) t.since = o.createdAt;
-  });
+  (open || []).forEach((b) => { busy[b.tableLabel] = { label: b.tableLabel, total: Number(b.total), ready: b.ready, since: b.since }; });
   const pending = Object.keys(carts).filter((k) => k.startsWith('m:') && carts[k].length).map((k) => k.replace(/^m:/, ''));
   const labels = [...new Set([...Object.keys(busy), ...pending])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
@@ -199,6 +195,7 @@ function QuickTablePicker({ rid, carts, toast, onPick, backTo, canEdit }) {
 /* ---------------- step 2: build the order ---------------- */
 
 function OrderPad({ rid, table, menu, error, floor, cart, setCart, onBack, onSent }) {
+  const [showBill, setShowBill] = useState(false);
   const [activeCat, setActiveCat] = useState(null);
   const [query, setQuery] = useState('');
   const [picking, setPicking] = useState(null);
@@ -285,6 +282,7 @@ function OrderPad({ rid, table, menu, error, floor, cart, setCart, onBack, onSen
           <b>Table {table.label}</b>
           <span className="muted small">{table.area || 'Manual'}{liveStatus?.openOrders ? ` · ${liveStatus.openOrders} sent · ${money(liveStatus.openTotal)}` : ''}</span>
         </div>
+        <button className="btn small pay-btn" onClick={() => setShowBill(true)}>Bill</button>
       </div>
 
       <div className="menu-search">
@@ -346,6 +344,8 @@ function OrderPad({ rid, table, menu, error, floor, cart, setCart, onBack, onSen
           <span>{count} item{count > 1 ? 's' : ''} · Table {table.label}</span><span>Review & send · {money(total)}</span>
         </button>
       )}
+
+      {showBill && <BillModal rid={rid} table={table.label} onClose={() => setShowBill(false)} onPaid={() => { setShowBill(false); onBack(); }} />}
 
       {picking && <OptionPicker item={picking} onClose={() => setPicking(null)} onAdd={(o, qn, n) => { add(picking, o, qn, n); setPicking(null); }} />}
 

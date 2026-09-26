@@ -6,6 +6,7 @@ import com.tabletap.domain.MenuItem;
 import com.tabletap.domain.Restaurant;
 import com.tabletap.dto.MenuDtos.*;
 import com.tabletap.live.LiveEvent;
+import com.tabletap.kitchen.Stations;
 import com.tabletap.repository.MenuCategoryRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import com.tabletap.repository.MenuItemRepository;
@@ -45,6 +46,7 @@ public class MenuService {
         c.setRestaurant(r);
         c.setName(req.name().trim());
         c.setSortOrder(req.sortOrder() == null ? 0 : req.sortOrder());
+        c.setStation(Stations.normalise(req.station()));
         categories.save(c);
         changed(u, r);
         return CategoryView.of(c);
@@ -54,6 +56,7 @@ public class MenuService {
         MenuCategory c = loadCategory(u, id);
         c.setName(req.name().trim());
         if (req.sortOrder() != null) c.setSortOrder(req.sortOrder());
+        c.setStation(Stations.normalise(req.station()));
         changed(u, c.getRestaurant());
         return CategoryView.of(c);
     }
@@ -94,6 +97,7 @@ public class MenuService {
         Restaurant r = i.getCategory().getRestaurant();
         access.requireKitchen(u, r);
         i.setAvailable(available);
+        i.setAutoUnavailable(false);
         changed(u, r);
         return ItemView.of(i);
     }
@@ -108,7 +112,12 @@ public class MenuService {
         i.setName(req.name().trim());
         i.setDescription(req.description());
         i.setPrice(req.price());
-        if (req.available() != null) i.setAvailable(req.available());
+        if (req.available() != null) {
+            i.setAvailable(req.available());
+            i.setAutoUnavailable(false); // a person decided — stock tracking stops overriding it
+        }
+        i.setStation(Stations.normalise(req.station()));
+        i.setKitchenName(req.kitchenName() == null || req.kitchenName().isBlank() ? null : req.kitchenName().trim());
         i.getOptions().clear();
         if (req.options() != null) {
             req.options().stream().filter(Objects::nonNull).map(String::trim)

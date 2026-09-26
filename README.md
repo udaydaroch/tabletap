@@ -44,6 +44,40 @@ connect to it over the restaurant's Wi-Fi, so an internet outage doesn't stop se
   local certificate).
 - Not yet: syncing the restaurant's data up to a cloud server (for remote owner access, central billing, off-site backup).
 
+## Restaurant features and the design patterns behind them
+
+| Feature | Pattern | Where |
+|---|---|---|
+| **Kitchen stations** — dishes go to the grill, bar, kitchen… (set per category, overridable per dish) | Chain of Responsibility | `kitchen/StationRouter` |
+| **Kitchen dockets** with the dish's name in the kitchen's language, and allergy notes shouted in big text | Decorator | `kitchen/TranslatedDocket`, `AllergyAlertDocket` |
+| **Docket printing** to network receipt printers (ESC/POS, port 9100), one per station, after the order commits | Observer | `kitchen/PrinterService` listens for `OrderPlaced` |
+| **Stock tracking** — recipes use up ingredients; low-stock alerts; dishes switch off when they can't be made and back on when restocked | Observer + Specification | `stock/StockService`, `stock/StockRules` |
+| **Bills and payments** — one bill, split evenly, by item or custom amounts; cash (with change) or card (on the restaurant's terminal) | Strategy (×2) | `payment/SplitStrategies`, `payment/PaymentMethods` |
+| **Undo / redo** in the floor-plan designer (⌘Z / ⇧⌘Z) | Command | `frontend/src/components/commandHistory.js` |
+| **Cloud sync** — orders, payments and shifts are copied to a cloud TableTap whenever the internet is up | Transactional outbox | `sync/SyncOutboxWriter`, `sync/SyncWorker` |
+| **Subscription billing** — owners are charged monthly through Stripe; they manage their card on Stripe's own page | Adapter | `billing/StripeBillingAdapter` |
+
+### Printers
+Restaurant → **Printers**: add each printer's IP address (must be on the local network: 10.x, 172.16–31.x, 192.168.x)
+and port (9100–9199), optionally a station. Tick "UTF-8" only if the printer can print non-Latin text.
+
+### Cloud sync (optional)
+1. On the **cloud** TableTap: Admin → Cloud sync → **Add computer**. Copy the key (shown once).
+2. On the **restaurant computer**, add to `.env`, then `docker compose up -d`:
+   ```
+   CLOUD_SYNC_URL=https://your-cloud-tabletap.example.com
+   CLOUD_SYNC_KEY=tts_…
+   ```
+Changes are written to an outbox in the same database transaction as the change itself, sent every 20 s when
+online, and ignored by the cloud if it already has them — so nothing is lost or duplicated.
+
+### Subscription billing with Stripe (optional)
+Set `STRIPE_SECRET_KEY` (a `sk_test_…` key from your Stripe dashboard while testing) and optionally
+`STRIPE_CURRENCY` (default `nzd`). On the 1st of each month owners are charged for the previous month (one line
+per restaurant); every charge has an idempotency key, so a retry can never bill twice. Owners click
+**Manage payment method** to add a card on Stripe's hosted page — card details never touch TableTap. Admins can
+run or retry a month from Admin → Monthly billing. Without a key, usage is still shown but nobody is charged.
+
 ## Host it in the cloud (Azure or AWS)
 
 The Docker setup above runs TableTap inside one restaurant. To offer it online as a service, host the same

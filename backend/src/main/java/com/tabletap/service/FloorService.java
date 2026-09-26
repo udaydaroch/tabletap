@@ -198,7 +198,9 @@ public class FloorService {
 
     private FloorPlan view(Restaurant r) {
         Map<Long, TableStatus> statuses = new HashMap<>();
-        Map<Long, List<CustomerOrder>> byTable = orders.findWithTableByStatus(r.getId(), OPEN).stream()
+        // a table is occupied until its bill is paid, not just until the food is served
+        Map<Long, List<CustomerOrder>> byTable = orders.findUnpaid(r.getId()).stream()
+            .filter(o -> o.getDiningTable() != null)
             .collect(Collectors.groupingBy(o -> o.getDiningTable().getId()));
         byTable.forEach((tableId, list) -> {
             BigDecimal total = list.stream().flatMap(o -> o.getLines().stream())
