@@ -44,6 +44,115 @@ connect to it over the restaurant's Wi-Fi, so an internet outage doesn't stop se
   local certificate).
 - Not yet: syncing the restaurant's data up to a cloud server (for remote owner access, central billing, off-site backup).
 
+## Host it in the cloud (Azure or AWS)
+
+The Docker setup above runs TableTap inside one restaurant. To offer it online as a service, host the same
+Docker image on **Azure** or **AWS**. One script sets everything up, and a GitHub pipeline then deploys every push
+to `main`.
+
+> **The pipeline is switched off as shipped.** It lives in `github/workflows/deploy.yml` — a folder *without* the
+> leading dot, which GitHub ignores. Nothing is built or deployed until you turn it on:
+>
+> ```bash
+> git mv github .github && git commit -m "Enable deploy pipeline" && git push
+> ```
+>
+> After that, GitHub runs it on every push to `main` (and you can run it by hand from the Actions tab).
+> To switch it off again: `git mv .github github`, commit, push.
+
+### What gets created
+
+| | Azure | AWS |
+|---|---|---|
+| App | Azure Container Apps (0.5 vCPU, 1 GB, scales to zero when idle) | AWS App Runner (1 vCPU, 2 GB) |
+| Database | Azure Database for PostgreSQL, Standard_B1ms, 32 GB | Amazon RDS PostgreSQL, db.t4g.micro, 20 GB, encrypted |
+| Image registry | GitHub Container Registry (free, private) | Amazon ECR |
+| Passwords | Container App secrets | SSM Parameter Store (SecureString) |
+| Database access | Only from inside Azure, TLS required | Private subnet, only from the app's security group |
+| GitHub → cloud login | OpenID Connect (no stored passwords) | OpenID Connect (no stored passwords) |
+
+Cost: on a new Azure free account, the database size is free for 12 months and the app stays inside the monthly
+Container Apps free grant at low use. On AWS, App Runner is billed from the first hour (roughly US$10–30/month
+for this size) and RDS depends on your account's free-tier or credits. Check each provider's pricing calculator
+before you start.
+
+### Option A: automatic (recommended)
+
+1. **Turn the pipeline on** (see the note above): `git mv github .github`, commit, push. Until step 3 sets
+   `DEPLOY_TARGET` it skips every run, so this is harmless on its own.
+2. **Log in to the cloud CLI:** `az login` for Azure, or `aws configure` (or `aws sso login`) for AWS, with an
+   account that can create resources and IAM roles.
+3. **Run the script** from the project folder:
+
+   ```bash
+   python3 deploy/cloud_deploy.py azure
+   ```
+
+   ```bash
+   python3 deploy/cloud_deploy.py aws
+   ```
+
+   It asks for:
+   - the admin email for TableTap;
+   - a **GitHub token** (classic, scopes `repo` + `workflow`, create at
+     <https://github.com/settings/tokens/new>). It's only used while the script runs; delete it afterwards;
+   - **Azure only:** a second classic token with just `read:packages`, which Azure keeps so it can download
+     your private image. Give it a long expiry.
+
+   Then it creates the database and app, connects GitHub to the cloud, sets the pipeline variables, runs the
+   pipeline to build the image, starts the app, waits until it answers, and prints the web address and admin
+   password. Generated passwords are kept in `deploy/.cloud-state.json` (git-ignored, readable only by you).
+   It's safe to run again.
+
+4. **From now on, push to `main`**, and the pipeline builds and deploys automatically.
+
+To remove everything it created: `python3 deploy/cloud_deploy.py azure --delete` (or `aws --delete`).
+
+### Option B: by hand — what the pipeline needs
+
+The pipeline (`.github/workflows/deploy.yml` once enabled) reads these **repository variables**
+(GitHub → your repo → Settings → Secrets and variables → Actions → **Variables** tab). None of them are
+passwords.
+
+| Variable | Azure | AWS |
+|---|---|---|
+| `DEPLOY_TARGET` | `azure` | `aws` |
+| Login | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | `AWS_ROLE_ARN`, `AWS_REGION` |
+| Where to deploy | `AZURE_RESOURCE_GROUP`, `AZURE_CONTAINER_APP` | `AWS_ECR_REPOSITORY`, `AWS_APPRUNNER_SERVICE` |
+
+On each push to `main` the pipeline:
+1. builds the Docker image (tagged with the commit id and `latest`);
+2. pushes it: to `ghcr.io/<owner>/tabletap` (Azure) or your ECR repository (AWS);
+3. logs in to the cloud with OpenID Connect;
+4. rolls out the new version: `az containerapp update --image …` or `aws apprunner start-deployment`;
+5. checks `https://<app>/actuator/health` returns `UP`, and fails the run if it doesn't.
+
+To set it up by hand you need:
+
+**Azure:**
+- a Microsoft Entra app registration with a *federated credential* for
+  `repo:<owner>/<repo>:ref:refs/heads/main`, given the **Contributor** role on the resource group;
+- a Container App running `ghcr.io/<owner>/tabletap:latest` on port 8080, with the environment variables below.
+
+**AWS:**
+- the IAM OIDC provider `token.actions.githubusercontent.com`;
+- a role it can assume (restricted to the same `repo:…:ref:refs/heads/main`), allowed to push to ECR and to call
+  `apprunner:StartDeployment`;
+- an App Runner service running `<account>.dkr.ecr.<region>.amazonaws.com/tabletap:latest` on port 8080 with a
+  VPC connector to the database.
+
+The app's environment variables in the cloud are:
+
+| Variable | Value |
+|---|---|
+| `DB_URL` | `jdbc:postgresql://<db-host>:5432/tabletap?sslmode=require` |
+| `DB_USER` / `DB_PASSWORD` | database login (store the password as a secret) |
+| `JWT_SECRET` | 48+ random characters (secret) |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | the platform admin account (password as a secret) |
+| `DEMO_DATA` | `false`; with this set, the app refuses to start on default secrets |
+
+Keep the app at **one running copy** for now: live updates and login lockouts are held in memory.
+
 ## Architecture
 
 ```

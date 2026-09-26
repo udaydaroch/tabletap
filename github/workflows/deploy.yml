@@ -1,0 +1,119 @@
+# Builds the TableTap Docker image and deploys it to Azure or AWS on every push to main.
+#
+# INACTIVE AS SHIPPED: this file lives in `github/workflows/` (no dot), which GitHub ignores.
+# To turn it on, rename the folder and commit:
+#     git mv github .github && git commit -m "Enable deploy pipeline" && git push
+#
+# Which cloud: set the repository variable DEPLOY_TARGET to "azure" or "aws"
+# (Settings -> Secrets and variables -> Actions -> Variables). Nothing runs until it's set.
+# One-time setup of the cloud side: python3 deploy/cloud_deploy.py azure|aws
+# No cloud passwords are stored in GitHub: both clouds are reached with OpenID Connect.
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write   # Azure path: push the image to ghcr.io
+  id-token: write   # OpenID Connect login to Azure / AWS
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.DEPLOY_TARGET == 'azure' || vars.DEPLOY_TARGET == 'aws'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image tag
+        run: echo "TAG=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------ Azure
+      - name: "Azure: build and push image to GitHub Container Registry"
+        if: vars.DEPLOY_TARGET == 'azure'
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tabletap"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker build --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+
+      - name: "Azure: log in"
+        if: vars.DEPLOY_TARGET == 'azure'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: "Azure: roll out to Container Apps"
+        if: vars.DEPLOY_TARGET == 'azure'
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ vars.AZURE_CONTAINER_APP }}
+        run: |
+          az extension add --name containerapp --upgrade --yes -o none
+          if az containerapp show -g "$RG" -n "$APP" -o none 2>/dev/null; then
+            az containerapp update -g "$RG" -n "$APP" --image "$IMAGE:$TAG" -o none
+            echo "APP_URL=https://$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)" >> "$GITHUB_ENV"
+          else
+            echo "Container App not created yet: image pushed only (the setup script creates the app)."
+          fi
+
+      # ------------------------------------------------------------ AWS
+      - name: "AWS: log in"
+        if: vars.DEPLOY_TARGET == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: "AWS: log in to ECR"
+        if: vars.DEPLOY_TARGET == 'aws'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: "AWS: build and push image to ECR"
+        if: vars.DEPLOY_TARGET == 'aws'
+        run: |
+          IMAGE="${{ steps.ecr.outputs.registry }}/${{ vars.AWS_ECR_REPOSITORY }}"
+          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+
+      - name: "AWS: redeploy App Runner"
+        if: vars.DEPLOY_TARGET == 'aws'
+        env:
+          SERVICE: ${{ vars.AWS_APPRUNNER_SERVICE }}
+        run: |
+          ARN=$(aws apprunner list-services --query "ServiceSummaryList[?ServiceName=='$SERVICE'].ServiceArn | [0]" --output text)
+          if [ -z "$ARN" ] || [ "$ARN" = "None" ]; then
+            echo "App Runner service not created yet: image pushed only (the setup script creates it)."
+            exit 0
+          fi
+          # the service runs the :latest tag, so a new deployment picks up the image we just pushed
+          aws apprunner start-deployment --service-arn "$ARN" > /dev/null
+          for i in $(seq 1 90); do
+            STATUS=$(aws apprunner describe-service --service-arn "$ARN" --query Service.Status --output text)
+            [ "$STATUS" = "RUNNING" ] && [ "$i" -gt 3 ] && break
+            sleep 10
+          done
+          echo "APP_URL=https://$(aws apprunner describe-service --service-arn "$ARN" --query Service.ServiceUrl --output text)" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------ both
+      - name: Smoke test
+        if: env.APP_URL != ''
+        run: |
+          for i in $(seq 1 40); do          # the first request may wake the app up
+            curl -fs "$APP_URL/actuator/health" | grep -q UP && { echo "Healthy: $APP_URL"; exit 0; }
+            sleep 6
+          done
+          echo "Deployed version is not healthy: $APP_URL"; exit 1
