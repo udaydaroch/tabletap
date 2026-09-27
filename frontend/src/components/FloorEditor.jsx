@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { useLive } from '../live.jsx';
 import { ElementLabel, FIXTURE_PRESETS, GridDefs, ShapeBody, TABLE_PRESETS, transformOf } from './FloorShapes.jsx';
 import { DowngradeLink, LayoutsModal, UpgradeModal } from './FloorPlanModals.jsx';
-import { CommandHistory, EditCommand } from './commandHistory.js';
+import { FloorPlanOriginator, UndoCaretaker } from './memento.js';
 import { money } from '../api.js';
 
 const SNAP = 10;
@@ -25,7 +25,7 @@ export default function FloorEditor({ rid }) {
   const [showLayouts, setShowLayouts] = useState(false);
   const svgRef = useRef(null);
   const drag = useRef(null);
-  const history = useRef(new CommandHistory());
+  const history = useRef(new UndoCaretaker());      // caretaker: stacks of saved floor plans
   const [, rerender] = useState(0);
   const areasRef = useRef(null);
   areasRef.current = areas;
@@ -58,19 +58,21 @@ export default function FloorEditor({ rid }) {
   const area = areas?.[active];
   const sel = area?.elements.find((e) => e.key === selected);
 
-  // every edit goes through a command, so it can be undone
+  // Memento: before every edit the originator saves the current plan and the caretaker keeps it
   const applyState = (next) => {
     setAreas(next);
     setDirty(true);
     setActive((i) => Math.min(i, Math.max(0, next.length - 1)));
   };
+  const originator = useRef(null);
+  if (!originator.current) originator.current = new FloorPlanOriginator(() => areasRef.current, applyState);
   const update = (fn, label = 'Edit') => {
-    const before = areasRef.current;
-    history.current.run(new EditCommand(label, before, fn(structuredClone(before))), applyState);
+    history.current.checkpoint(originator.current.save(label));
+    applyState(fn(structuredClone(areasRef.current)));
     rerender((n) => n + 1);
   };
-  const undo = () => { if (history.current.undo(applyState)) rerender((n) => n + 1); };
-  const redo = () => { if (history.current.redo(applyState)) rerender((n) => n + 1); };
+  const undo = () => { if (history.current.undo(originator.current)) rerender((n) => n + 1); };
+  const redo = () => { if (history.current.redo(originator.current)) rerender((n) => n + 1); };
   const updateSel = (patch, label = 'Edit') => update((as) => {
     const el = as[active].elements.find((e) => e.key === selected);
     Object.assign(el, patch);
@@ -118,13 +120,13 @@ export default function FloorEditor({ rid }) {
     evt.stopPropagation();
     setSelected(el.key);
     const p = toSvg(evt);
-    drag.current = { mode: 'move', key: el.key, label: el.label, sx: p.x, sy: p.y, ox: el.x, oy: el.y, before: areasRef.current };
+    drag.current = { mode: 'move', key: el.key, label: el.label, sx: p.x, sy: p.y, ox: el.x, oy: el.y, snapshot: originator.current.save(`Move ${el.label || 'item'}`) };
     svgRef.current.setPointerCapture(evt.pointerId);
   };
   const startResize = (evt, el) => {
     evt.stopPropagation();
     const p = toSvg(evt);
-    drag.current = { mode: 'resize', key: el.key, label: el.label, sx: p.x, sy: p.y, ow: el.w, oh: el.h, rot: (el.rotation || 0) * Math.PI / 180, before: areasRef.current };
+    drag.current = { mode: 'resize', key: el.key, label: el.label, sx: p.x, sy: p.y, ow: el.w, oh: el.h, rot: (el.rotation || 0) * Math.PI / 180, snapshot: originator.current.save(`Resize ${el.label || 'item'}`) };
     svgRef.current.setPointerCapture(evt.pointerId);
   };
   const onMove = (evt) => {
@@ -153,9 +155,11 @@ export default function FloorEditor({ rid }) {
     const d = drag.current;
     if (d) {
       lastDragEnd.current = Date.now();
-      // the whole drag becomes one command (undo puts it back where the drag started)
-      history.current.record(new EditCommand(`${d.mode === 'move' ? 'Move' : 'Resize'} ${d.label || 'item'}`, d.before, areasRef.current));
-      rerender((n) => n + 1);
+      // the memento taken when the drag started = one undo step for the whole drag
+      if (!originator.current.isUnchangedSince(d.snapshot)) {
+        history.current.checkpoint(d.snapshot);
+        rerender((n) => n + 1);
+      }
     }
     drag.current = null;
   };
