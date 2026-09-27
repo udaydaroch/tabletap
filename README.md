@@ -42,7 +42,38 @@ connect to it over the restaurant's Wi-Fi, so an internet outage doesn't stop se
   this over HTTPS or on `localhost`. On a plain `http://192.168.x.x` address everything above still works
   while the page stays open, but a full page reload needs the server. Next step: local HTTPS (e.g. Caddy with a
   local certificate).
-- Not yet: syncing the restaurant's data up to a cloud server (for remote owner access, central billing, off-site backup).
+- Optional: copy the restaurant's data up to a cloud TableTap when the internet is on (see **Cloud sync** below).
+
+## New features, in plain words
+
+**Kitchen stations** — Each dish is sent to the right place: drinks to the bar, steaks to the grill, and so on.
+You pick a station for each menu category (Restaurant → Menu → *Station*). The kitchen screen then gets buttons
+to show only one station's dishes.
+
+**Kitchen names and allergy warnings** — A dish can have a second name for the cooks (for example in their own
+language). If a waiter's note mentions an allergy ("nut allergy", "gluten free"…), it's shown with a ⚠ and in big
+letters so nobody misses it.
+
+**Printed dockets** — Plug a receipt printer into the restaurant's network and add its address under
+Restaurant → **Printers**. When an order is sent, each station's printer prints its own ticket.
+
+**Stock** — Tell TableTap what ingredients you have (Restaurant → **Stock**) and what each dish uses (edit a dish →
+*Recipe*). Every order takes its ingredients off the count. When something runs low you get a warning; when a dish
+can't be made any more it switches itself off, and it comes back on when you restock.
+
+**Bills and payments** — On a table, tap **Bill**. Choose one bill, split it evenly, split it by who had what, or
+type in amounts. Then take each part in cash (it works out the change) or by card on your own card machine. The
+table is free again once everything is paid.
+
+**Undo / redo** — In the floor-plan designer, made a mistake? Press **Undo** (⌘Z) to go back a step, **Redo** (⇧⌘Z) to
+go forward again. Dragging a table counts as one step, however far you drag it.
+
+**Cloud sync (optional)** — If you also run TableTap online, the restaurant computer copies its orders, payments
+and shifts up to it whenever the internet works. If the internet is down, it waits and sends them later. Nothing
+gets lost or sent twice. Setup is below.
+
+**Monthly billing with Stripe (optional)** — Restaurant owners are charged for TableTap automatically each month.
+They add their card on Stripe's own secure page, so TableTap never sees the card number. Setup is below.
 
 ## Restaurant features and the design patterns behind them
 
@@ -53,7 +84,7 @@ connect to it over the restaurant's Wi-Fi, so an internet outage doesn't stop se
 | **Docket printing** to network receipt printers (ESC/POS, port 9100), one per station, after the order commits | Observer | `kitchen/PrinterService` listens for `OrderPlaced` |
 | **Stock tracking** — recipes use up ingredients; low-stock alerts; dishes switch off when they can't be made and back on when restocked | Observer + Specification | `stock/StockService`, `stock/StockRules` |
 | **Bills and payments** — one bill, split evenly, by item or custom amounts; cash (with change) or card (on the restaurant's terminal) | Strategy (×2) | `payment/SplitStrategies`, `payment/PaymentMethods` |
-| **Undo / redo** in the floor-plan designer (⌘Z / ⇧⌘Z) | Command | `frontend/src/components/commandHistory.js` |
+| **Undo / redo** in the floor-plan designer (⌘Z / ⇧⌘Z) | Memento | `frontend/src/components/memento.js` |
 | **Cloud sync** — orders, payments and shifts are copied to a cloud TableTap whenever the internet is up | Transactional outbox | `sync/SyncOutboxWriter`, `sync/SyncWorker` |
 | **Subscription billing** — owners are charged monthly through Stripe; they manage their card on Stripe's own page | Adapter | `billing/StripeBillingAdapter` |
 
@@ -233,8 +264,6 @@ To add a new account type: add the enum value, then extend `AccessService` (and 
 - Container runs as non-root; DB is not exposed outside Docker.
 
 ## Next steps (not built yet)
-- Kitchen docket printing — listen for `ORDER_CREATED` events (print service / ESC-POS printer)
-- Real billing — Stripe metered subscriptions in `BillingService`
 - Flyway migrations instead of `ddl-auto: update`
 - Redis for live events + rate limits if you ever run more than one app server
 - httpOnly cookie sessions + refresh tokens, 2FA for owners/admins
