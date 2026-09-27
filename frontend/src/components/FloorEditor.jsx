@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { useLive } from '../live.jsx';
 import { ElementLabel, FIXTURE_PRESETS, GridDefs, ShapeBody, TABLE_PRESETS, transformOf } from './FloorShapes.jsx';
 import { DowngradeLink, LayoutsModal, UpgradeModal } from './FloorPlanModals.jsx';
+import { FloorPlanOriginator, UndoCaretaker } from './memento.js';
 import { money } from '../api.js';
 
 const SNAP = 10;
@@ -24,6 +25,10 @@ export default function FloorEditor({ rid }) {
   const [showLayouts, setShowLayouts] = useState(false);
   const svgRef = useRef(null);
   const drag = useRef(null);
+  const history = useRef(new UndoCaretaker());      // caretaker: stacks of saved floor plans
+  const [, rerender] = useState(0);
+  const areasRef = useRef(null);
+  areasRef.current = areas;
   const lastDragEnd = useRef(0);
 
   const load = useCallback(async () => {
@@ -32,6 +37,7 @@ export default function FloorEditor({ rid }) {
   }, [rid]);
 
   function applyPlan(plan) {
+    history.current.clear();
     setAreas(withKeys(plan.areas));
     setTier({ advanced: plan.advanced, price: plan.advancedMonthlyPrice });
     setDirty(false);
@@ -52,8 +58,22 @@ export default function FloorEditor({ rid }) {
   const area = areas?.[active];
   const sel = area?.elements.find((e) => e.key === selected);
 
-  const update = (fn) => { setAreas((as) => fn(structuredClone(as))); setDirty(true); };
-  const updateSel = (patch) => update((as) => {
+  // Memento: before every edit the originator saves the current plan and the caretaker keeps it
+  const applyState = (next) => {
+    setAreas(next);
+    setDirty(true);
+    setActive((i) => Math.min(i, Math.max(0, next.length - 1)));
+  };
+  const originator = useRef(null);
+  if (!originator.current) originator.current = new FloorPlanOriginator(() => areasRef.current, applyState);
+  const update = (fn, label = 'Edit') => {
+    history.current.checkpoint(originator.current.save(label));
+    applyState(fn(structuredClone(areasRef.current)));
+    rerender((n) => n + 1);
+  };
+  const undo = () => { if (history.current.undo(originator.current)) rerender((n) => n + 1); };
+  const redo = () => { if (history.current.redo(originator.current)) rerender((n) => n + 1); };
+  const updateSel = (patch, label = 'Edit') => update((as) => {
     const el = as[active].elements.find((e) => e.key === selected);
     Object.assign(el, patch);
     return as;
@@ -72,18 +92,18 @@ export default function FloorEditor({ rid }) {
       label: kind === 'TABLE' ? nextTableLabel() : preset.label,
       x: snap(area.width / 2 - preset.w / 2), y: snap(area.height / 2 - preset.h / 2),
     };
-    update((as) => { as[active].elements.push(el); return as; });
+    update((as) => { as[active].elements.push(el); return as; }, `Add ${preset.name.toLowerCase()}`);
     setSelected(el.key);
   };
 
   const remove = () => {
-    update((as) => { as[active].elements = as[active].elements.filter((e) => e.key !== selected); return as; });
+    update((as) => { as[active].elements = as[active].elements.filter((e) => e.key !== selected); return as; }, `Delete ${sel?.label || 'item'}`);
     setSelected(null);
   };
   const duplicate = () => {
     const copy = { ...structuredClone(sel), key: `e${++tmpId}`, id: undefined, x: sel.x + 30, y: sel.y + 30 };
     if (copy.kind === 'TABLE') copy.label = nextTableLabel();
-    update((as) => { as[active].elements.push(copy); return as; });
+    update((as) => { as[active].elements.push(copy); return as; }, 'Duplicate');
     setSelected(copy.key);
   };
 
@@ -100,13 +120,13 @@ export default function FloorEditor({ rid }) {
     evt.stopPropagation();
     setSelected(el.key);
     const p = toSvg(evt);
-    drag.current = { mode: 'move', key: el.key, sx: p.x, sy: p.y, ox: el.x, oy: el.y };
+    drag.current = { mode: 'move', key: el.key, label: el.label, sx: p.x, sy: p.y, ox: el.x, oy: el.y, snapshot: originator.current.save(`Move ${el.label || 'item'}`) };
     svgRef.current.setPointerCapture(evt.pointerId);
   };
   const startResize = (evt, el) => {
     evt.stopPropagation();
     const p = toSvg(evt);
-    drag.current = { mode: 'resize', key: el.key, sx: p.x, sy: p.y, ow: el.w, oh: el.h, rot: (el.rotation || 0) * Math.PI / 180 };
+    drag.current = { mode: 'resize', key: el.key, label: el.label, sx: p.x, sy: p.y, ow: el.w, oh: el.h, rot: (el.rotation || 0) * Math.PI / 180, snapshot: originator.current.save(`Resize ${el.label || 'item'}`) };
     svgRef.current.setPointerCapture(evt.pointerId);
   };
   const onMove = (evt) => {
@@ -131,7 +151,18 @@ export default function FloorEditor({ rid }) {
     });
     setDirty(true);
   };
-  const endDrag = () => { if (drag.current) lastDragEnd.current = Date.now(); drag.current = null; };
+  const endDrag = () => {
+    const d = drag.current;
+    if (d) {
+      lastDragEnd.current = Date.now();
+      // the memento taken when the drag started = one undo step for the whole drag
+      if (!originator.current.isUnchangedSince(d.snapshot)) {
+        history.current.checkpoint(d.snapshot);
+        rerender((n) => n + 1);
+      }
+    }
+    drag.current = null;
+  };
 
   const onCanvasClick = (evt) => {
     if (Date.now() - lastDragEnd.current < 300) return; // the click that ends a drag
@@ -147,7 +178,7 @@ export default function FloorEditor({ rid }) {
     const w = Math.max(20, Math.max(...xs) - minX), h = Math.max(20, Math.max(...ys) - minY);
     const points = drawing.map(([x, y]) => `${+((x - minX) / w).toFixed(3)},${+((y - minY) / h).toFixed(3)}`).join(' ');
     const el = { key: `e${++tmpId}`, kind: 'TABLE', shape: 'POLYGON', x: minX, y: minY, w, h, rotation: 0, seats: 4, label: nextTableLabel(), points };
-    update((as) => { as[active].elements.push(el); return as; });
+    update((as) => { as[active].elements.push(el); return as; }, 'Draw shape');
     setSelected(el.key);
     setDrawing(null);
   };
@@ -156,11 +187,14 @@ export default function FloorEditor({ rid }) {
   useEffect(() => {
     const onKey = (e) => {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+      if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
       if (e.key === 'Escape') { setDrawing(null); setSelected(null); }
       if (!sel) return;
       const step = e.shiftKey ? 50 : SNAP;
       const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
-      if (moves[e.key]) { e.preventDefault(); updateSel({ x: sel.x + moves[e.key][0], y: sel.y + moves[e.key][1] }); }
+      if (moves[e.key]) { e.preventDefault(); updateSel({ x: sel.x + moves[e.key][0], y: sel.y + moves[e.key][1] }, `Move ${sel.label || 'item'}`); }
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); remove(); }
     };
     window.addEventListener('keydown', onKey);
@@ -171,18 +205,18 @@ export default function FloorEditor({ rid }) {
   const addArea = () => {
     const name = prompt('Name of the new area (e.g. Patio, Upstairs)');
     if (!name) return;
-    update((as) => [...as, { key: `a${++tmpId}`, name, width: 1000, height: 700, elements: [] }]);
+    update((as) => [...as, { key: `a${++tmpId}`, name, width: 1000, height: 700, elements: [] }], `Add area ${name}`);
     setActive(areas.length);
   };
   const renameArea = () => {
     const name = prompt('Rename area', area.name);
-    if (name) update((as) => { as[active].name = name; return as; });
+    if (name) update((as) => { as[active].name = name; return as; }, 'Rename area');
   };
   const deleteArea = () => {
     const tables = area.elements.filter((e) => e.kind === 'TABLE').length;
     if (!confirm(`Delete the area "${area.name}"${tables ? ` and its ${tables} table${tables > 1 ? 's' : ''}` : ''}? Past orders are kept. Press Save to confirm.`)) return;
     setSelected(null);
-    update((as) => as.filter((_, i) => i !== active));
+    update((as) => as.filter((_, i) => i !== active), `Delete area ${area.name}`);
     setActive(0);
   };
 
@@ -198,6 +232,7 @@ export default function FloorEditor({ rid }) {
       const selIdx = sel ? area.elements.indexOf(sel) : -1;
       const next = withKeys(plan.areas);
       setAreas(next);
+      history.current.clear(); // saved: ids changed, start a fresh history
       setSelected(selIdx >= 0 ? next[active]?.elements[selIdx]?.key ?? null : null);
       setDirty(false);
       setMsg({ ok: 'Floor plan saved — waiters see it now.' });
@@ -236,6 +271,10 @@ export default function FloorEditor({ rid }) {
           {area && <button className="btn small" onClick={renameArea}>Rename area</button>}
           {area && <button className="btn small danger-ghost" onClick={deleteArea}>Delete area</button>}
           <button className="btn small" onClick={() => setShowLayouts(true)}>Layouts</button>
+          <button className="btn small" onClick={undo} disabled={!history.current.undoLabel}
+            title={history.current.undoLabel ? `Undo ${history.current.undoLabel} (⌘Z)` : 'Nothing to undo'} aria-label="Undo">↶ Undo</button>
+          <button className="btn small" onClick={redo} disabled={!history.current.redoLabel}
+            title={history.current.redoLabel ? `Redo ${history.current.redoLabel} (⇧⌘Z)` : 'Nothing to redo'} aria-label="Redo">↷ Redo</button>
           {dirty && <span className="pill">Unsaved changes</span>}
           <button className="btn primary" onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save floor plan'}</button>
         </div>

@@ -74,5 +74,12 @@ public class RestaurantService {
         r.setName(req.name().trim());
         r.setAddress(req.address());
         r.setCuisine(req.cuisine());
+        if (req.timeZone() != null && !req.timeZone().isBlank()) {
+            try {
+                r.setTimeZone(java.time.ZoneId.of(req.timeZone().trim()).getId());
+            } catch (java.time.DateTimeException e) {
+                throw ApiException.badRequest("Unknown time zone: " + req.timeZone());
+            }
+        }
     }
 }

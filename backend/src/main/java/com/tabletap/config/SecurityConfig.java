@@ -45,6 +45,7 @@ public class SecurityConfig {
             .authorizeHttpRequests(a -> a
                 .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll() // SSE re-dispatch
                 .requestMatchers("/api/auth/login", "/api/auth/register-owner", "/actuator/health/**").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/sync/ingest").permitAll() // X-Site-Key checked in SyncService
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().permitAll()) // React SPA + static assets

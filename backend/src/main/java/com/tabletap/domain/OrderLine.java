@@ -35,4 +35,10 @@ public class OrderLine {
     private List<String> options = new ArrayList<>();
 
     private String note;
+
+    /** Station this line was routed to when the order was placed. */
+    private String station;
+
+    /** Snapshot of the dish's kitchen-language name at order time. */
+    private String kitchenName;
 }

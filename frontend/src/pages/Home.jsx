@@ -48,6 +48,11 @@ function StaffHome() {
         <Link className="tile" to={`/restaurants/${me.restaurantId}/kitchen`}>
           <span className="tile-icon">🍳</span>Kitchen queue
         </Link>
+        {me.role === 'CHEF' && (
+          <Link className="tile" to={`/restaurants/${me.restaurantId}/stock`}>
+            <span className="tile-icon">📦</span>Stock
+          </Link>
+        )}
         <Link className="tile" to={`/restaurants/${me.restaurantId}/today`}>
           <span className="tile-icon">📋</span>Today's orders
         </Link>
@@ -92,6 +97,7 @@ function ManagerHome() {
               <span className="pill">{r.openOrders} open orders</span>
             </div>
             {me.role === 'ADMIN' && <p className="small">Owner: {r.ownerName}</p>}
+            <StockAlertCount rid={r.id} />
           </Link>
         ))}
         {restaurants?.length === 0 && <p className="muted">No restaurants yet.</p>}
@@ -111,6 +117,10 @@ function Billing() {
   const { data, reload } = useAsync(() => api('/billing/usage'), []);
   const [open, setOpen] = useState(false);
   useLive(['RESTAURANT_CHANGED', 'ORDER_CREATED'], reload);
+  const [portalErr, setPortalErr] = useState(null);
+  const openPortal = async () => {
+    try { window.location.assign((await api('/billing/portal', { method: 'POST' })).url); } catch (e) { setPortalErr(e.message); }
+  };
   if (!data) return null;
   return (
     <div className="card">
@@ -121,7 +131,10 @@ function Billing() {
           {data.totalOrders} orders × {money(data.feePerOrder)} = {money(data.orderFees)}
           {Number(data.floorPlanFees) > 0 && <><br />{money(data.floorPlanFees)} floor-plan add-on</>}
         </div>
-        <button className="btn small ghost" onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Breakdown'}</button>
+        <div className="actions">
+          <button className="btn small ghost" onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Breakdown'}</button>
+          {data.provider && <button className="btn small" onClick={openPortal}>Manage payment method</button>}
+        </div>
       </div>
       {open && (
         <div className="list">
@@ -137,9 +150,18 @@ function Billing() {
               <b>{money(l.subtotal)}</b>
             </div>
           ))}
+          {portalErr && <div className="error">{portalErr}</div>}
           <p className="muted small">New restaurants and floor plans ({money(data.floorPlanFee)}/mo) are charged only for the days left in the month.</p>
         </div>
       )}
     </div>
   );
+}
+
+/** Small "⚠ 2 stock alerts" badge on a restaurant card. */
+function StockAlertCount({ rid }) {
+  const { data, reload } = useAsync(() => api(`/restaurants/${rid}/stock-alerts`), [rid]);
+  useLive(['STOCK_CHANGED', 'ORDER_CREATED'], (ev) => { if (ev.restaurantId === rid) reload(); });
+  if (!data?.length) return null;
+  return <p className="small stock-alert-count">⚠ {data.length} stock alert{data.length > 1 ? 's' : ''}</p>;
 }

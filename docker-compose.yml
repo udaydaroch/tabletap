@@ -31,6 +31,13 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe123!}
       DEMO_DATA: ${DEMO_DATA:-true}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-Password123!}
+      # Optional: send this restaurant's changes to a cloud TableTap (see README "Cloud sync")
+      CLOUD_SYNC_URL: ${CLOUD_SYNC_URL:-}
+      CLOUD_SYNC_KEY: ${CLOUD_SYNC_KEY:-}
+      # Optional: charge owners through Stripe (see README "Subscription billing")
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_CURRENCY: ${STRIPE_CURRENCY:-nzd}
+      STRIPE_API_BASE: ${STRIPE_API_BASE:-https://api.stripe.com}
     depends_on:
       db:
         condition: service_healthy

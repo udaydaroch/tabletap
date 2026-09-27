@@ -41,4 +41,7 @@ public class AppUser {
     private int tokenVersion;
 
     private Instant createdAt = Instant.now();
+
+    /** Owners: the customer id at the billing provider (e.g. Stripe cus_…). */
+    private String billingCustomerId;
 }

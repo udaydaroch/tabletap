@@ -22,6 +22,10 @@ public interface OrderRepository extends JpaRepository<CustomerOrder, Long> {
     @Query("select o.restaurant.id, count(o) from CustomerOrder o where o.restaurant.owner.id = :ownerId and o.createdAt >= :since group by o.restaurant.id")
     List<Object[]> countPerRestaurantForOwnerSince(Long ownerId, Instant since);
 
+    @Query("select o.restaurant.id, count(o) from CustomerOrder o where o.restaurant.owner.id = :ownerId "
+         + "and o.createdAt >= :from and o.createdAt < :to group by o.restaurant.id")
+    List<Object[]> countPerRestaurantForOwnerBetween(Long ownerId, Instant from, Instant to);
+
     long countByRestaurantIdAndStatusIn(Long restaurantId, Collection<OrderStatus> statuses);
 
     List<CustomerOrder> findByRestaurantIdAndCreatedAtGreaterThanEqualAndCreatedAtLessThanOrderByCreatedAtAsc(
@@ -34,6 +38,20 @@ public interface OrderRepository extends JpaRepository<CustomerOrder, Long> {
     @Modifying
     @Query("update CustomerOrder o set o.diningTable = null where o.diningTable.id in :tableIds")
     int detachTables(Collection<Long> tableIds);
+
+    /** Everything still owed on a table (locked while paying so two people can't settle it at once). */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from CustomerOrder o where o.restaurant.id = :restaurantId and o.tableLabel = :tableLabel "
+         + "and o.bill is null and o.status <> com.tabletap.domain.OrderStatus.CANCELLED order by o.createdAt")
+    List<CustomerOrder> lockUnpaidForTable(Long restaurantId, String tableLabel);
+
+    @Query("select o from CustomerOrder o where o.restaurant.id = :restaurantId and o.tableLabel = :tableLabel "
+         + "and o.bill is null and o.status <> com.tabletap.domain.OrderStatus.CANCELLED order by o.createdAt")
+    List<CustomerOrder> findUnpaidForTable(Long restaurantId, String tableLabel);
+
+    @Query("select o from CustomerOrder o where o.restaurant.id = :restaurantId "
+         + "and o.bill is null and o.status <> com.tabletap.domain.OrderStatus.CANCELLED order by o.createdAt")
+    List<CustomerOrder> findUnpaid(Long restaurantId);
 
     long countByWaiterIdAndCreatedAtAfter(Long waiterId, Instant since);
 }

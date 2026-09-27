@@ -6,3 +6,4 @@ target/
 *.iml
 backups/
 deploy/.cloud-state.json
+.DS_Store

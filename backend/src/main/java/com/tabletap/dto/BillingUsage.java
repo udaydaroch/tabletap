@@ -12,7 +12,7 @@ import java.util.List;
 public record BillingUsage(Long ownerId, LocalDate periodStart, LocalDate periodEnd, int daysInPeriod,
                            BigDecimal feePerRestaurant, BigDecimal feePerOrder, BigDecimal floorPlanFee, List<Line> lines,
                            long totalOrders, BigDecimal restaurantFees, BigDecimal orderFees, BigDecimal floorPlanFees,
-                           BigDecimal estimatedTotal) {
+                           BigDecimal estimatedTotal, String provider) {
 
     public record Line(Long restaurantId, String name, LocalDate billedFrom, int daysBilled,
                        BigDecimal restaurantFee, long orders, BigDecimal orderFees,

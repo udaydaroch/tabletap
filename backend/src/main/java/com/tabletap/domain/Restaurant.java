@@ -20,6 +20,9 @@ public class Restaurant {
 
     private String cuisine;
 
+    /** IANA time zone, e.g. Pacific/Auckland. Used for docket times. Null = UTC. */
+    private String timeZone;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     private AppUser owner;
 

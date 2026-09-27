@@ -31,6 +31,7 @@ public class ShiftService {
         s.setRestaurant(u.getRestaurant());
         s.setClockIn(Instant.now());
         shifts.save(s);
+        events.publishEvent(new com.tabletap.domain.DomainEvents.ShiftChanged(s.getId()));
         events.publishEvent(LiveEvent.of(LiveEvent.SHIFT_CHANGED, u.getRestaurant(), u.getId()));
         return ShiftView.of(s);
     }
@@ -39,6 +40,7 @@ public class ShiftService {
         Shift s = shifts.findFirstByUserIdAndClockOutIsNull(u.getId())
             .orElseThrow(() -> ApiException.badRequest("Not clocked in"));
         s.setClockOut(Instant.now());
+        events.publishEvent(new com.tabletap.domain.DomainEvents.ShiftChanged(s.getId()));
         events.publishEvent(LiveEvent.of(LiveEvent.SHIFT_CHANGED, s.getRestaurant(), u.getId()));
         return ShiftView.of(s);
     }
